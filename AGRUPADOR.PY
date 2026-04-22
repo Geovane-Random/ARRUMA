@@ -1,20 +1,12 @@
 import os
 import shutil
 import hashlib
+import ctypes # Para tornar o arquivo oculto no Windows
 import sys
 import subprocess
 from pathlib import Path
+from config import TIPOS_ARQUIVOS, NOME_LOG
 
-# Dicionário de tipos de arquivo
-tipos = {
-    'Textos': ['.txt', '.doc', '.docx', '.pdf', '.rtf'],
-    'Imagens': ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.svg'],
-    'Videos': ['.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv'],
-    'Audios': ['.mp3', '.wav', '.flac', '.aac', '.ogg'],
-    'Arquivos_Comprimidos': ['.zip', '.rar', '.7z', '.tar', '.gz'],
-    'Executaveis': ['.exe', '.msi', '.bat', '.sh'],
-    'Outros': []
-}
 
 def super_normalizer(path_str):
     """
@@ -30,13 +22,73 @@ def super_normalizer(path_str):
     resolved = Path(expanded).resolve()
     return resolved
 
+def sanitizar_nome_arquivo(nome):
+    """
+    Remove ou substitui caracteres ilegais para garantir compatibilidade 
+    entre NTFS, FAT32 e sistemas Unix.
+    """
+    # Caracteres proibidos no Windows: <>:"/\|?* e caracteres de controle
+    caracteres_invalidos = '<>:"/\\|?*'
+    for char in caracteres_invalidos:
+        nome = nome.replace(char, "_")
+    # Remove caracteres não imprimíveis
+    nome = "".join(c for c in nome if c.isprintable())
+    return nome.strip()
+
+def gerar_caminho_unico(destino):
+    """Garante um caminho único para evitar sobrescritas em sistemas case-insensitive."""
+    if not destino.exists():
+        return destino
+    
+    base = destino.parent
+    nome = destino.stem
+    ext = destino.suffix
+    contador = 1
+    while (base / f"{nome} ({contador}){ext}").exists():
+        contador += 1
+    return base / f"{nome} ({contador}){ext}"
+
+def _make_file_hidden_if_windows(file_path):
+    """Torna um arquivo oculto no Windows se o sistema operacional for Windows."""
+    if sys.platform == "win32":
+        try:
+            # FILE_ATTRIBUTE_HIDDEN = 0x02
+            ctypes.windll.kernel32.SetFileAttributesW(str(file_path), 0x02)
+        except Exception:
+            # Falha silenciosamente se não conseguir definir o atributo (ex: permissão)
+            pass
+
+def registrar_log(diretorio_base, origem, destino):
+    """Registra a movimentação no arquivo de log dentro da pasta base."""
+    log_path = diretorio_base / NOME_LOG
+    # Usamos TAB (\t) como separador, pois é proibido em caminhos na maioria dos sistemas
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"{origem}\t{destino}\n")
+        _make_file_hidden_if_windows(log_path) # Torna o log oculto após escrever
+    except Exception as e:
+        print(f"Erro ao registrar log: {e}")
+
+def exibir_progresso(concluido, total, acao="Processando"):
+    """Exibe uma barra de progresso simples no terminal com contador e porcentagem."""
+    if total == 0:
+        return
+    percentual = (concluido / total) * 100
+    largura_barra = 40
+    progresso = int((concluido / total) * largura_barra)
+    barra = '█' * progresso + '-' * (largura_barra - progresso)
+    sys.stdout.write(f"\r{acao}: |{barra}| {percentual:.1f}% ({concluido}/{total})")
+    sys.stdout.flush()
+    if concluido == total:
+        sys.stdout.write("\n")
+
 def verificar_bibliotecas():
     """
     Verifica se as bibliotecas necessárias estão instaladas. Se não, instala do requirements.txt.
     """
     required = ['os', 'shutil', 'hashlib', 'sys', 'pathlib', 'subprocess']
     missing = []
-    for lib in required:
+    for lib in required: # ctypes é padrão, não precisa ser verificado explicitamente aqui
         try:
             __import__(lib)
         except ImportError:
@@ -69,16 +121,26 @@ def calcular_hash(caminho_arquivo):
     except:
         return None
 
-def detectar_duplicatas(diretorio_origem):
-    hashes = {}
+def detectar_duplicatas(diretorio_origem, filtro_extensoes=None):
+    todos_arquivos = []
     for root, dirs, files in os.walk(diretorio_origem):
         for file in files:
-            caminho_arquivo = Path(root) / file
-            hash_arquivo = calcular_hash(caminho_arquivo)
-            if hash_arquivo:
-                if hash_arquivo not in hashes:
-                    hashes[hash_arquivo] = []
-                hashes[hash_arquivo].append(caminho_arquivo)
+            caminho = Path(root) / file
+            # Se houver filtro, verifica se a extensão do arquivo está na lista permitida
+            if filtro_extensoes is None or caminho.suffix.lower() in filtro_extensoes:
+                if "Duplicatas" not in caminho.parts: # Evita re-escanear pasta de duplicatas
+                    todos_arquivos.append(caminho)
+    
+    total = len(todos_arquivos)
+    hashes = {}
+    for i, caminho_arquivo in enumerate(todos_arquivos, 1):
+        hash_arquivo = calcular_hash(caminho_arquivo)
+        if hash_arquivo:
+            if hash_arquivo not in hashes:
+                hashes[hash_arquivo] = []
+            hashes[hash_arquivo].append(caminho_arquivo)
+        exibir_progresso(i, total, "Escaneando")
+        
     duplicatas = {h: paths for h, paths in hashes.items() if len(paths) > 1}
     return duplicatas
 
@@ -97,10 +159,13 @@ def lidar_com_duplicatas(duplicatas, diretorio_origem):
     for hash_val, paths in duplicatas.items():
         manter = paths[0]  # Manter o primeiro
         for caminho in paths[1:]:
+            nome_sanitizado = sanitizar_nome_arquivo(caminho.name)
             if escolha == "2":
-                destino = pasta_duplicatas / caminho.name
+                # Garante nome único para evitar conflitos de nomes iguais em pastas diferentes
+                destino = gerar_caminho_unico(pasta_duplicatas / nome_sanitizado)
                 try:
                     shutil.move(str(caminho), str(destino))
+                    registrar_log(diretorio_origem, caminho, destino)
                     print(f"Duplicata movida: {caminho} -> {destino}")
                 except Exception as e:
                     print(f"Erro ao mover duplicata {caminho}: {e}")
@@ -113,29 +178,93 @@ def lidar_com_duplicatas(duplicatas, diretorio_origem):
             # Para escolha 1, não faz nada
 
 def obter_tipo_arquivo(extensao):
-    for tipo, extensoes in tipos.items():
+    for tipo, extensoes in TIPOS_ARQUIVOS.items():
         if extensao.lower() in extensoes:
             return tipo
     return 'Outros'
 
-def organizar_arquivos(diretorio_origem):
+def organizar_arquivos(diretorio_origem, filtro_extensoes=None):
+    pastas_alvo = set(TIPOS_ARQUIVOS.keys()) | {"Duplicatas", "Outros"}
+    arquivos_para_mover = []
+    
     for root, dirs, files in os.walk(diretorio_origem):
+        # Evita re-processar arquivos já organizados em pastas de destino
+        rel_path = Path(root).relative_to(diretorio_origem)
+        if rel_path.parts and rel_path.parts[0] in pastas_alvo:
+            continue
+            
         for file in files:
-            caminho_arquivo = Path(root) / file
-            extensao = caminho_arquivo.suffix
-            tipo = obter_tipo_arquivo(extensao)
+            caminho = Path(root) / file
+            # Aplica o filtro de extensões na organização também
+            if filtro_extensoes is None or caminho.suffix.lower() in filtro_extensoes:
+                arquivos_para_mover.append(caminho)
 
-            # Criar pasta do tipo se não existir
-            pasta_tipo = Path(diretorio_origem) / tipo
-            pasta_tipo.mkdir(exist_ok=True)
+    total = len(arquivos_para_mover)
+    for i, caminho_arquivo in enumerate(arquivos_para_mover, 1):
+        extensao = caminho_arquivo.suffix
+        tipo = obter_tipo_arquivo(extensao)
+        pasta_tipo = Path(diretorio_origem) / tipo
+        pasta_tipo.mkdir(exist_ok=True)
 
-            # Mover arquivo
-            destino = pasta_tipo / file
-            try:
-                shutil.move(str(caminho_arquivo), str(destino))
-                print(f"Movido: {caminho_arquivo} -> {destino}")
-            except Exception as e:
-                print(f"Erro ao mover {caminho_arquivo}: {e}")
+        nome_sanitizado = sanitizar_nome_arquivo(caminho_arquivo.name)
+        destino = gerar_caminho_unico(pasta_tipo / nome_sanitizado)
+
+        try:
+            shutil.move(str(caminho_arquivo), str(destino))
+            registrar_log(diretorio_origem, caminho_arquivo, destino)
+        except Exception:
+            pass
+        exibir_progresso(i, total, "Movendo")
+
+def desfazer_organizacao(caminho_input):
+    """Lê o log e devolve os arquivos para as pastas originais."""
+    diretorio = super_normalizer(caminho_input)
+    if diretorio.is_file():
+        log_path = diretorio
+        diretorio_base = log_path.parent
+    else:
+        log_path = diretorio / NOME_LOG
+        diretorio_base = diretorio
+
+    if not log_path.exists():
+        print(f"Arquivo de log não encontrado em: {log_path}")
+        return
+
+    with open(log_path, "r", encoding="utf-8") as f:
+        linhas = f.readlines()
+
+    if not linhas:
+        print("O log está vazio.")
+        return
+
+    print(f"Restaurando {len(linhas)} arquivos...")
+    for i, linha in enumerate(reversed(linhas), 1):
+        try:
+            origem_str, destino_str = linha.strip().split('\t')
+            origem = Path(origem_str)
+            destino = Path(destino_str)
+
+            if destino.exists():
+                origem.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(destino), str(origem))
+            else:
+                print(f"\nAVISO: Destino '{destino}' não encontrado. Pulando restauração.")
+            
+        except Exception as e:
+            print(f"\nErro ao restaurar arquivo (linha {i}): {e}")
+        finally:
+            exibir_progresso(i, len(linhas), "Restaurando")
+
+    sys.stdout.write("\n") # Garante que a próxima mensagem apareça em uma nova linha
+    confirm = input("Deseja remover o arquivo de log após a restauração? (s/n): ").strip().lower()
+    if confirm == 's':
+        try:
+            log_path.unlink()
+            print("Restauração concluída e log removido.")
+        except Exception as e:
+            print(f"Restauração concluída, mas erro ao remover o log: {e}")
+    else:
+        print("Restauração concluída. O arquivo de log foi mantido.")
 
 def main():
     print("Verificando bibliotecas necessárias...")
@@ -158,13 +287,43 @@ def main():
         print(f"Caminho inválido ou não é um diretório: {diretorio_origem}")
         return
 
-    print(f"Detectando duplicatas em {diretorio_origem}...")
-    duplicatas = detectar_duplicatas(diretorio_origem)
+    # Categorias disponíveis (exceto 'Outros' que é o fallback automático)
+    categorias = [k for k in TIPOS_ARQUIVOS.keys() if k != 'Outros']
+    
+    print("\nO que você deseja organizar?")
+    print("0. Tudo (Todas as categorias)")
+    for i, cat in enumerate(categorias, 1):
+        print(f"{i}. apenas {cat}")
+    
+    opcao_desfazer = len(categorias) + 1
+    print(f"{opcao_desfazer}. DESFAZER (Restaurar arquivos para origem)")
+    
+    opcao = input(f"Escolha uma opção (0-{opcao_desfazer}): ").strip()
+    
+    if opcao == str(opcao_desfazer):
+        desfazer_organizacao(str(diretorio_origem))
+        return
+
+    filtro = None
+    try:
+        idx = int(opcao)
+        if 0 < idx <= len(categorias):
+            filtro = TIPOS_ARQUIVOS[categorias[idx-1]]
+    except (ValueError, IndexError):
+        filtro = None # Default para 'Tudo'
+
+    print(f"\nDetectando duplicatas em {diretorio_origem}...")
+    duplicatas = detectar_duplicatas(diretorio_origem, filtro)
     lidar_com_duplicatas(duplicatas, diretorio_origem)
 
-    print(f"Organizando arquivos em {diretorio_origem}...")
-    organizar_arquivos(diretorio_origem)
+    print(f"\nOrganizando arquivos em {diretorio_origem}...")
+    organizar_arquivos(diretorio_origem, filtro)
     print("Organização concluída!")
+
+    # Pergunta se o usuário deseja desfazer a operação imediatamente
+    reverter = input("\nDeseja desfazer a organização e retornar os arquivos para o estado original agora? (s/n): ").strip().lower()
+    if reverter == 's':
+        desfazer_organizacao(str(diretorio_origem))
 
 if __name__ == "__main__":
     main()
