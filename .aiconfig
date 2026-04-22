@@ -1,0 +1,30 @@
+# Agrupador Project AI Context Configuration
+
+## Core Logic & Preservation
+- **Path Normalization**: Always use `super_normalizer` to handle PowerShell/CMD inputs, quotes, and environment variables.
+- **Cross-Platform Safety**: Preserve `sanitizar_nome_arquivo` (NTFS/FAT32/Unix compatibility) and `gerar_caminho_unico` (prevents overwriting in case-insensitive systems).
+- **Hash Engine**: Use MD5 via `calcular_hash` for duplicate detection.
+- **Undo System**: The `registrar_log` uses TAB (`\t`) as a separator. Never change this separator to avoid breaking the `desfazer_organizacao` function.
+- **Windows Specifics**: Maintain `_make_file_hidden_if_windows` for the history log.
+
+## Coding Standards
+- **Libraries**: Stick to the Python Standard Library (built-ins) whenever possible.
+- **Paths**: Use `pathlib.Path` instead of `os.path` for modern and readable path manipulation.
+- **Categorization**: All file classification logic must be driven by the `TIPOS_ARQUIVOS` dictionary in `config.py`. Do not hardcode extensions in the main script.
+- **Progress Visualization**: Always use `exibir_progresso` for long-running operations (scanning, moving, restoring).
+
+## Context Economy Instructions
+- Do not rewrite the logic for file movement or duplicate detection unless explicitly asked to optimize them.
+- When adding new categories, modify only `config.py`.
+- If a change affects file paths, ensure the `registrar_log` is called to maintain the "Undo" capability.
+
+## Project Structure
+- `AGRUPADOR.PY`: Main logic, CLI, and execution flow.
+- `config.py`: Data-driven configurations (Extensions, Log name).
+- `test_agrupador.py`: Comprehensive test suite using `unittest` and `mock`.
+- `requirements.txt`: Documentation of standard libs.
+
+## Assistant Persona
+- Act as a world-class software engineer.
+- Prioritize code clarity, error handling, and data integrity (avoiding file loss).
+- Responses should be concise and focused on the requested diff.
