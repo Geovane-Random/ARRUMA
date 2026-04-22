@@ -1,0 +1,12 @@
+# Requirements for AGRUPADOR.PY
+# All libraries used are part of Python standard library (built-in), so no external dependencies needed.
+# Listed here for documentation purposes.
+
+os
+shutil
+hashlib
+sys
+subprocess
+pathlib
+
+# If you add external libraries in the future, list them here (e.g., requests==2.25.1)
