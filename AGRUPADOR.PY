@@ -48,6 +48,16 @@ def gerar_caminho_unico(destino):
         contador += 1
     return base / f"{nome} ({contador}){ext}"
 
+def remover_pastas_vazias(diretorio):
+    """Remove pastas vazias recursivamente de baixo para cima."""
+    for root, dirs, files in os.walk(diretorio, topdown=False):
+        for name in dirs:
+            caminho_pasta = Path(root) / name
+            try:
+                caminho_pasta.rmdir()  # Só remove se estiver vazia
+            except OSError:
+                pass
+
 def _make_file_hidden_if_windows(file_path):
     """Torna um arquivo oculto no Windows se o sistema operacional for Windows."""
     if sys.platform == "win32":
@@ -176,6 +186,8 @@ def lidar_com_duplicatas(duplicatas, diretorio_origem):
                 except Exception as e:
                     print(f"Erro ao apagar duplicata {caminho}: {e}")
             # Para escolha 1, não faz nada
+    
+    remover_pastas_vazias(diretorio_origem)
 
 def obter_tipo_arquivo(extensao):
     for tipo, extensoes in TIPOS_ARQUIVOS.items():
@@ -215,6 +227,8 @@ def organizar_arquivos(diretorio_origem, filtro_extensoes=None):
         except Exception:
             pass
         exibir_progresso(i, total, "Movendo")
+    
+    remover_pastas_vazias(diretorio_origem)
 
 def desfazer_organizacao(caminho_input):
     """Lê o log e devolve os arquivos para as pastas originais."""
@@ -255,16 +269,10 @@ def desfazer_organizacao(caminho_input):
         finally:
             exibir_progresso(i, len(linhas), "Restaurando")
 
-    sys.stdout.write("\n") # Garante que a próxima mensagem apareça em uma nova linha
-    confirm = input("Deseja remover o arquivo de log após a restauração? (s/n): ").strip().lower()
-    if confirm == 's':
-        try:
-            log_path.unlink()
-            print("Restauração concluída e log removido.")
-        except Exception as e:
-            print(f"Restauração concluída, mas erro ao remover o log: {e}")
-    else:
-        print("Restauração concluída. O arquivo de log foi mantido.")
+    # Limpa as pastas de categoria (Ex: Documentos, Imagens) que ficaram vazias após o undo
+    remover_pastas_vazias(diretorio_base)
+
+    print("\nRestauração concluída. O arquivo de log foi mantido para segurança.")
 
 def main():
     print("Verificando bibliotecas necessárias...")

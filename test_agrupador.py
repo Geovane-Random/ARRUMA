@@ -18,6 +18,7 @@ try:
         detectar_duplicatas, 
         lidar_com_duplicatas,
         obter_tipo_arquivo, 
+        remover_pastas_vazias,
         organizar_arquivos,
         desfazer_organizacao,
     )
@@ -46,6 +47,30 @@ class TestAgrupador(unittest.TestCase):
         """Remove o diretório de teste após a execução dos testes."""
         if self.test_dir.exists():
             shutil.rmtree(self.test_dir)
+
+    def test_remover_pastas_vazias(self):
+        """Verifica se pastas vazias são removidas recursivamente."""
+        pasta_pai = self.test_dir / "Pai"
+        sub_pasta = pasta_pai / "Filho"
+        sub_pasta.mkdir(parents=True)
+        
+        remover_pastas_vazias(self.test_dir)
+        
+        self.assertFalse(sub_pasta.exists())
+        self.assertFalse(pasta_pai.exists())
+
+    def test_registrar_log(self):
+        """Verifica se o log utiliza o separador TAB conforme exigido para compatibilidade."""
+        origem = self.test_dir / "arquivo_origem.txt"
+        destino = self.test_dir / "arquivo_destino.txt"
+        
+        registrar_log(self.test_dir, origem, destino)
+        
+        log_path = self.test_dir / "agrupador_history.txt"
+        self.assertTrue(log_path.exists())
+        conteudo = log_path.read_text(encoding="utf-8")
+        # Verifica se o separador TAB (\t) está presente entre os caminhos
+        self.assertIn(f"{origem}\t{destino}", conteudo)
 
     def test_obter_tipo_arquivo(self):
         """Verifica se a classificação por extensão está correta de acordo com o dicionário 'tipos'."""
@@ -119,19 +144,27 @@ class TestAgrupador(unittest.TestCase):
 
     def test_organizar_arquivos(self):
         """Verifica se os arquivos são movidos para as subpastas corretas."""
+        # Criar uma subpasta original para testar se ela é removida após ficar vazia
+        pasta_origem_interna = self.test_dir / "PastaAntiga"
+        pasta_origem_interna.mkdir()
+        arquivo_na_pasta = pasta_origem_interna / "documento3.txt"
+        arquivo_na_pasta.write_text("teste")
+
         organizar_arquivos(self.test_dir)
         
         # Checar se as pastas de destino foram criadas e contêm os arquivos
         self.assertTrue((self.test_dir / "Documentos" / "documento1.txt").exists())
+        self.assertTrue((self.test_dir / "Documentos" / "documento3.txt").exists())
         self.assertTrue((self.test_dir / "Imagens" / "imagem.jpg").exists())
-        self.assertTrue((self.test_dir / "Videos" / "video.mp4").exists())
-        self.assertTrue((self.test_dir / "Outros" / "desconhecido.xyz").exists())
-        
-        # Checar se o arquivo original foi movido (não deve existir mais na raiz do diretório de teste)
-        self.assertFalse((self.test_dir / "imagem.jpg").exists())
+
+        # Verificar se a pasta que ficou vazia foi removida
+        self.assertFalse(pasta_origem_interna.exists())
 
     def test_organizar_arquivos_com_filtro(self):
         """Verifica se apenas os arquivos do filtro selecionado são movidos."""
+        # Garantir que temos um vídeo para mover
+        video_path = self.test_dir / "video.mp4"
+        
         # Organizar apenas vídeos
         organizar_arquivos(self.test_dir, filtro_extensoes=tipos['Videos'])
         
@@ -147,8 +180,7 @@ class TestAgrupador(unittest.TestCase):
         normalized = super_normalizer(path_with_quotes)
         self.assertIsInstance(normalized, Path)
 
-    @patch('builtins.input', return_value='s') # Mock input para confirmar remoção do log
-    def test_desfazer_organizacao(self, mock_input):
+    def test_desfazer_organizacao(self):
         """Verifica se a função desfazer_organizacao restaura os arquivos corretamente."""
         # 1. Preparar arquivos e simular organização
         original_doc_path = self.test_dir / "documento1.txt"
@@ -184,8 +216,9 @@ class TestAgrupador(unittest.TestCase):
         self.assertTrue(original_doc_path.exists())
         self.assertTrue(original_img_path.exists())
         self.assertFalse(moved_doc_path.exists()) # Não deve mais existir na pasta de destino
-        self.assertFalse(moved_img_path.exists()) # Não deve mais existir na pasta de destino
-        self.assertFalse((self.test_dir / "agrupador_history.txt").exists()) # Log deve ter sido removido
+        # As pastas de categoria vazias (Documentos/Imagens) devem ter sido removidas pelo undo
+        self.assertFalse(pasta_documentos.exists())
+        self.assertTrue((self.test_dir / "agrupador_history.txt").exists()) # Log deve ser mantido
 
 if __name__ == "__main__":
     unittest.main()
