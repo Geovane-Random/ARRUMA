@@ -8,23 +8,25 @@ import io
 
 # Importa as funções do script original para teste unitário
 try:
-    from AGRUPADOR import (
+    from utils import (
         super_normalizer, 
         _make_file_hidden_if_windows,
         registrar_log,
         exibir_progresso,
         verificar_bibliotecas,
+        remover_pastas_vazias,
+    )
+    from core import (
         calcular_hash, 
         detectar_duplicatas, 
         lidar_com_duplicatas,
         obter_tipo_arquivo, 
-        remover_pastas_vazias,
         organizar_arquivos,
         desfazer_organizacao,
     )
     from config import TIPOS_ARQUIVOS as tipos
 except ImportError:
-    print("Erro: Não foi possível importar os módulos necessários. Verifique AGRUPADOR.PY e config.py.")
+    print("Erro: Não foi possível importar os módulos necessários. Verifique core.py, utils.py e config.py.")
     sys.exit(1)
 
 class TestAgrupador(unittest.TestCase):
